@@ -1,0 +1,8 @@
+{
+  "comment": "space.ai-builders 部署预置（上线阶段使用，POST /v1/deployments）",
+  "repo_url": "<建公开 GitHub 仓库后填写>",
+  "service_name": "career-pacer",
+  "branch": "main",
+  "port": 8000,
+  "env_vars": {}
+}

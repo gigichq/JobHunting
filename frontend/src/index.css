@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy: #0a1e50;
+  --color-brand-blue: #0052d9;
+  --color-brand-orange: #ff6b35;
+  --color-ink: #1a1a2e;
+  --color-soft: #f7f8fa;
+  --color-line: #dfe5f2;
+  --color-card: #e8eefb;
+  --color-peach: #fff4ee;
+}
+
+body {
+  @apply bg-white text-ink antialiased;
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}

@@ -1,0 +1,25 @@
+# 参考材料与设计文档含真实学生 PII——整个 docs/ 永不入仓库
+docs/
+
+# 密钥与本地数据
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# 系统
+.DS_Store
+.claude/
