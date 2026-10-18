@@ -30,15 +30,19 @@ class Settings(BaseSettings):
 
     ai_builder_token: str = ""
     llm_base_url: str = "https://space.ai-builders.com/backend/v1"
+    # 全链路默认 deepseek-v4-flash（2026-10 实测：评分方差 0、与 gemini 分差 ≤1、快 2–3 倍；
+    # kimi-k3 叙事单调用 5min+ 不可用）。可用 env 换回 gemini-4-argon（评分）等
     interview_model: str = "deepseek-v4-flash"
-    scoring_model: str = "gemini-4-argon"
-    narrative_model: str = "kimi-k3"
+    scoring_model: str = "deepseek-v4-flash"
+    narrative_model: str = "deepseek-v4-flash"
     jwt_secret: str = ""
     db_path: str = "./data/app.db"
     brand_name: str = "求职陪跑"
     brand_tagline_en: str = "CAREER PACER · RUN WITH YOU"
     daily_session_limit: int = 3
     port: int = 8000
+    # 额外黑名单替换对（敏感词不入代码库）：格式 "词=替换,词=替换"
+    blacklist_extra: str = ""
 
     # 成本/防滥用护栏
     max_message_chars: int = 2000

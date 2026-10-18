@@ -37,6 +37,24 @@ def get_client() -> AsyncOpenAI:
 # 强制 temperature=1.0（参数不传）且 max_tokens≥1024 的模型前缀
 _NO_TEMP_PREFIXES = ("kimi", "gpt-5", "gpt-6")
 
+# 网关怪癖（2026-10 实测）：gemini 系模型的 user 消息含字面量 "score" 时，
+# 网关报 400 "Requests ending with a model turn are not supported"（system/assistant 不受影响，
+# 其他模型不受影响）。对策：给 user 消息中的 score 插入零宽空格，语义与显示均不变；
+# quote_check.normalize 会剥掉零宽字符，引语核验不受影响。
+_GEMINI_SCORE_RE = re.compile(r"(?i)s(core)")
+
+
+def _sanitize_for_gateway(model: str, messages: list[dict]) -> list[dict]:
+    if not model.startswith("gemini"):
+        return messages
+    out = []
+    for m in messages:
+        content = m.get("content")
+        if m.get("role") == "user" and isinstance(content, str):
+            m = {**m, "content": _GEMINI_SCORE_RE.sub("s​\\1", content)}
+        out.append(m)
+    return out
+
 _PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 _WECHAT_RE = re.compile(r"(?:微信|vx|wx|weixin)[\s:：号]*([a-zA-Z][\w-]{5,19})", re.I)
@@ -62,6 +80,10 @@ class LLMError(Exception):
     pass
 
 
+class EmptyContentError(LLMError):
+    """空内容（常见于思考型模型 max_tokens 被思考耗尽），可重试。"""
+
+
 async def _chat_once(
     model: str,
     messages: list[dict],
@@ -79,7 +101,10 @@ async def _chat_once(
         kwargs["response_format"] = {"type": "json_object"}
     started = time.monotonic()
     resp = await get_client().chat.completions.create(
-        model=model, messages=messages, timeout=timeout, **kwargs
+        model=model,
+        messages=_sanitize_for_gateway(model, messages),
+        timeout=timeout,
+        **kwargs,
     )
     latency = round(time.monotonic() - started, 2)
     usage = getattr(resp, "usage", None)
@@ -97,7 +122,8 @@ async def _chat_once(
     )
     content = resp.choices[0].message.content
     if not content:
-        raise LLMError(f"{model} 返回空内容")
+        finish = getattr(resp.choices[0], "finish_reason", None)
+        raise EmptyContentError(f"{model} 返回空内容（finish_reason={finish}）")
     return content
 
 
@@ -106,6 +132,12 @@ async def _chat_with_backoff(**kw) -> str:
     for attempt in range(3):
         try:
             return await _chat_once(**kw)
+        except EmptyContentError as exc:
+            # 空内容重试时加大 token 预算（思考型模型思考会吃掉预算）
+            if attempt == 2:
+                raise
+            kw = {**kw, "max_tokens": kw.get("max_tokens", 2048) * 2}
+            logger.warning("%s；加倍 max_tokens 至 %s 重试", exc, kw["max_tokens"])
         except (APITimeoutError, RateLimitError, APIError) as exc:
             status = getattr(exc, "status_code", None)
             retriable = isinstance(exc, (APITimeoutError, RateLimitError)) or (

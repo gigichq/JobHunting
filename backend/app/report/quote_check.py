@@ -11,6 +11,7 @@ import re
 import unicodedata
 
 NEGATION_WORDS = ["没有", "没做过", "没", "不是", "不会", "不", "未", "无"]
+_ZERO_WIDTH_RE = re.compile(r"[​‌‍﻿]")
 _DIGIT_RE = re.compile(r"\d+(?:\.\d+)?")
 _PUNCT_RE = re.compile(r"[\s　!-/:-@\[-`{-~。，、；：？！…—·「」『』（）《》【】“”‘’\"']+")
 
@@ -18,7 +19,8 @@ FUZZY_THRESHOLD = 0.85
 
 
 def normalize(text: str) -> str:
-    """全角→半角、去空白与标点、小写。"""
+    """全角→半角、去零宽字符/空白/标点、小写。"""
+    text = _ZERO_WIDTH_RE.sub("", text)
     text = unicodedata.normalize("NFKC", text)
     text = _PUNCT_RE.sub("", text)
     return text.lower()

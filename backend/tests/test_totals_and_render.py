@@ -137,7 +137,7 @@ def test_render_report_assertions():
     # 雷达 SVG 存在
     assert "<svg" in html
     # 黑名单词不出现（通用）
-    for banned in ["家长", "北迹星", "AstraArc", "最刺眼", "请勿转发", "仅限内部"]:
+    for banned in ["家长", "最刺眼", "请勿转发", "仅限内部"]:
         assert banned not in html, f"黑名单词出现: {banned}"
     # AI 标识
     assert 'name="generator" content="AI"' in html
@@ -158,6 +158,12 @@ def test_render_professional_variant_blacklist():
 
 
 def test_scrub_blacklist():
-    text = "家长请注意，这是北迹星最刺眼的问题"
+    text = "家长请注意，这是最刺眼的问题"
     out = pipeline.scrub_blacklist(text, "student")
-    assert "家长" not in out and "北迹星" not in out and "最刺眼" not in out
+    assert "家长" not in out and "最刺眼" not in out
+
+
+def test_scrub_blacklist_env_extra():
+    # conftest 注入 BLACKLIST_EXTRA=测试敏感词=安全替换
+    out = pipeline.scrub_blacklist("这里有测试敏感词出现", "student")
+    assert "测试敏感词" not in out and "安全替换" in out

@@ -8,7 +8,7 @@ AI 求职准备度诊断：与 AI 诊断师完成一场结构化对话，自动�
 
 - 后端：FastAPI + SQLAlchemy 2 + SQLite（WAL）· Python 3.11
 - 前端：React 18 + TypeScript + Vite + Tailwind（构建产物由 FastAPI 静态托管，单进程单端口）
-- LLM：AI Builders 网关（OpenAI 兼容）——对话 `deepseek-v4-flash` / 评分 `gemini-4-argon`（低温）/ 叙事 `kimi-k3`
+- LLM：AI Builders 网关（OpenAI 兼容）——对话/评分/叙事默认均为 `deepseek-v4-flash`（实测评分方差 0、整报告 <1 分钟；可经 env 按环节换模型，评分候选 `gemini-4-argon`）
 
 ## 本地开发
 

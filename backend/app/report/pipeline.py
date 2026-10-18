@@ -41,16 +41,26 @@ _env = Environment(
     autoescape=select_autoescape(["html", "j2"]),
 )
 
-# 黑名单词 → 安全替换（通用 + 社招加严）；渲染测试断言最终 HTML 不含这些词
+# 黑名单词 → 安全替换（通用 + 社招加严）；渲染测试断言最终 HTML 不含这些词。
+# 品牌/来源相关的敏感词不入库，经 BLACKLIST_EXTRA 环境变量注入（格式：词=替换,词=替换）
 BLACKLIST_COMMON = {
     "家长": "你",
-    "北迹星": "求职陪跑",
-    "AstraArc": "CAREER PACER",
     "最刺眼": "最需要先补上",
     "请勿转发": "",
     "仅限内部": "",
 }
 BLACKLIST_PROFESSIONAL = {"学员": "你", "同学": "", "在校": ""}
+
+
+def _blacklist_extra() -> dict:
+    raw = get_settings().blacklist_extra
+    pairs = {}
+    for item in raw.split(","):
+        if "=" in item:
+            word, _, repl = item.partition("=")
+            if word.strip():
+                pairs[word.strip()] = repl.strip()
+    return pairs
 
 
 class PipelineAborted(Exception):
@@ -154,12 +164,17 @@ class RunContext:
         self.started = time.monotonic()
         self.settings = get_settings()
 
-    def checkpoint(self, db: Session, stage: str | None = None) -> Report:
-        """每次模型调用前自检：接管/删除/截止。通过则刷新心跳。"""
+    def checkpoint(
+        self, db: Session, stage: str | None = None, *, enforce_deadline: bool = True
+    ) -> Report:
+        """每次模型调用前自检：接管/删除/截止。通过则刷新心跳。
+        纯代码步骤（如渲染）传 enforce_deadline=False——截止只拦新的模型调用，不作废已完成的产物。"""
         report = db.get(Report, self.report_id)
         if report is None or report.status == "deleted" or report.run_id != self.run_id:
             raise PipelineAborted("run 已被接管或报告已删除")
-        if time.monotonic() - self.started > self.settings.pipeline_deadline_seconds:
+        if enforce_deadline and (
+            time.monotonic() - self.started > self.settings.pipeline_deadline_seconds
+        ):
             report.status = "failed"
             report.error = "生成超过总截止时间（8 分钟），已取消剩余调用。可一键重试，从断点继续。"
             db.commit()
@@ -327,13 +342,16 @@ async def _run_pipeline(db: Session, ctx: RunContext) -> None:
                 [{"role": "system", "content": sys_p}, {"role": "user", "content": usr_p}],
                 schema_hint=schema,
                 validator=lambda d: model_cls.model_validate(d),
-                max_tokens=4096,
-                timeout=120,
+                # 思考型模型（如 kimi）思考计入 completion_tokens，长文输出需留足预算
+                max_tokens=8192,
+                timeout=180,
                 stage=f"report_{key}",
                 session_id=session.id,
                 user_id=session.user_id,
             )
-            return key, out.model_dump()
+            # 完成即落库：另一路失败时本路成果不丢（断点续跑只补缺的那一路）
+            ctx.save_stage(db, key, out.model_dump())
+            return key
 
         outcomes = await asyncio.gather(
             *(run_narrative(*t) for t in d_tasks), return_exceptions=True
@@ -341,12 +359,10 @@ async def _run_pipeline(db: Session, ctx: RunContext) -> None:
         for item in outcomes:
             if isinstance(item, BaseException):
                 raise LLMError(f"叙事章节生成失败: {item}")
-            key, data = item
-            ctx.save_stage(db, key, data)
         stages = db.get(Report, ctx.report_id).stages
 
-    # ---- Stage E 组装渲染（纯代码） ----
-    ctx.checkpoint(db, "rendering")
+    # ---- Stage E 组装渲染（纯代码，不卡总截止） ----
+    ctx.checkpoint(db, "rendering", enforce_deadline=False)
     report_doc = _assemble(
         stages, b_results, totals, session, user, transcript_len=len(user_messages)
     )
@@ -561,7 +577,7 @@ def _narrative_context(stages: dict, b_results: dict, totals: dict, profile: dic
 
 
 def scrub_blacklist(text: str, identity: str) -> str:
-    table = dict(BLACKLIST_COMMON)
+    table = {**BLACKLIST_COMMON, **_blacklist_extra()}
     if identity == "professional":
         table.update(BLACKLIST_PROFESSIONAL)
     for bad, good in table.items():

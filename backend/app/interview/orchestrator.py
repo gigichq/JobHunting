@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..analytics import track
 from ..config import get_settings
-from ..llm.client import chat_json, redact_pii
+from ..llm.client import LLMError, chat_json, chat_text, redact_pii
 from ..models import DiagSession, Message
 from . import guards, prompts
 from .dimensions import DIM_BY_KEY, DIM_KEYS, OPENING_QUESTIONS
@@ -23,6 +23,30 @@ logger = logging.getLogger(__name__)
 
 RECENT_TURNS = 12
 BAD_QUALITIES = {"perfunctory", "off_topic"}
+QUESTION_ACTIONS = {"followup", "next_question", "switch_dimension"}
+
+
+def question_count(text: str) -> int:
+    return text.count("？") + text.count("?")
+
+
+def apply_opening_guard(decision: dict, opening_remaining: int) -> tuple[dict, bool]:
+    """开场段硬护栏：开场问题问完之前只允许 next_question。
+    返回 (决策, 是否违例)——违例时 message 也需要改写成应问的开场问题。"""
+    if opening_remaining <= 0 or decision.get("action") == "next_question":
+        return decision, False
+    if decision.get("action") in {"switch_dimension", "followup"}:
+        decision["action"] = "next_question"
+        decision["next_dimension"] = None
+        return decision, True
+    return decision, False
+
+
+def message_violates_single_question(decision: dict) -> bool:
+    """每轮恰 1 问（wrap_up/end 为收尾语，不检查）。"""
+    if decision.get("action") not in QUESTION_ACTIONS:
+        return False
+    return question_count(decision.get("message", "")) != 1
 
 
 class Decision(BaseModel):
@@ -158,8 +182,8 @@ async def handle_user_message(
         consecutive_bad_answers=_consecutive_bad(db, session.id),
     )
     if opening_remaining > 0:
-        # 开场段只允许继续开场或切入第一个维度
-        directives.allowed_actions = {"next_question", "switch_dimension"}
+        # 开场段只允许继续开场问题（问完才可切维度）
+        directives.allowed_actions = {"next_question"}
         if directives.forced_action:
             directives.allowed_actions = {directives.forced_action}
     elif current_dim is None:
@@ -209,6 +233,17 @@ async def handle_user_message(
 
     # 5. 护栏改写
     decision, fixes = guards.enforce(decision, directives, _dim_coverage(cov))
+    # 开场段硬护栏：开场问题问完之前不得切维度/追问
+    decision, opening_violated = apply_opening_guard(decision, opening_remaining)
+    if opening_violated:
+        fixes.append("开场段未完成 → 强制 next_question")
+        pending_q = OPENING_QUESTIONS[identity][opening_asked]
+        decision["message"] = await _polish_message(
+            session,
+            decision["message"],
+            f"在简短肯定用户上一轮回答（≤1 句）之后，提出这个问题：「{pending_q}」。"
+            "总共不超过 3 句、恰好一个问号。",
+        )
     # 开场结束且无当前维度时，提问必须归属某个维度（否则计数与护栏全部失效）
     if (
         opening_remaining == 0
@@ -220,6 +255,15 @@ async def handle_user_message(
             _dim_coverage(cov)
         )
         fixes.append("开场后无当前维度 → 强制 switch_dimension")
+    # 每轮恰 1 问：违例时轻量改写 message（软修复，失败保留原文不阻塞对话）
+    if message_violates_single_question(decision):
+        fixes.append(f"message 含 {question_count(decision['message'])} 个问号 → 改写为恰 1 问")
+        decision["message"] = await _polish_message(
+            session,
+            decision["message"],
+            "改写为不超过 3 句、恰好一个问号的一段话：保留原意、事实与引用的用户原话；"
+            "若原文有多个问题，只保留最重要的那一个。",
+        )
     if fixes:
         logger.info("guards 改写决策 session=%s: %s", session.id, fixes)
     action = decision["action"]
@@ -314,6 +358,34 @@ async def handle_user_message(
         "progress": progress_payload(cov),
         "ended": ended,
     }
+
+
+async def _polish_message(session: DiagSession, original: str, requirement: str) -> str:
+    """用快模型按要求改写 message；失败时原样返回，不阻塞对话。"""
+    settings = get_settings()
+    try:
+        out = await chat_text(
+            settings.interview_model,
+            [
+                {
+                    "role": "system",
+                    "content": "你是中文文案改写助手。只输出改写后的那段话本身，"
+                    "不要任何解释、引号或 markdown。",
+                },
+                {"role": "user", "content": f"{requirement}\n\n原文：\n{original}"},
+            ],
+            temperature=0.3,
+            max_tokens=400,
+            timeout=30,
+            stage="message_fix",
+            session_id=session.id,
+            user_id=session.user_id,
+        )
+        out = out.strip()
+        return out if out else original
+    except LLMError:
+        logger.warning("message 改写失败，保留原文 session=%s", session.id)
+        return original
 
 
 def _dim_is_done(dim_cov: dict, mode: str) -> bool:

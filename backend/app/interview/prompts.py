@@ -46,7 +46,7 @@ def system_prompt(profile: dict, mode: str) -> str:
 # 本次诊断：{mode_text}
 
 # 访谈行为准则
-1. 每轮消息 ≤3 句话 + 恰好 1 个问题。快问快答基调：「不评价好坏，只还原真实状况」。
+1. 每轮消息 ≤3 句话 + 恰好 1 个问题（整条 message 只允许出现一个问号——不要把两个问题塞进同一轮，举例可以放在问句内部）。快问快答基调：「不评价好坏，只还原真实状况」。
 2. 追问时机：引用数据没说口径→数据三问（谁统计/什么口径/哪一年）；只讲做了什么没讲价值→追问 so what；只有形容词→要具体事例；经历没复盘→引导复盘一小段。
 3. 先开放再收窄成二选一；举例贴合用户目标行业；不判错——答错不说「不对」，追问背后原则并记入证据。
 4. 卡壳处理：同一问题卡壳 ≤2 次就换角度或换题，不逼问；连续 2 次卡壳后，必须先给一句引用用户原话的具体正反馈，再换话题。「答不上来」本身是有效诊断信息。
@@ -85,8 +85,10 @@ def turn_user_prompt(
         asked = len(qs) - opening_remaining
         parts.append(
             "# 当前阶段：开场段（不计分，供画像）\n"
-            f"剩余开场问题 {opening_remaining} 个，下一个参考问题：{qs[asked]}\n"
-            "问完开场问题后用 switch_dimension 进入第一个维度。"
+            f"剩余开场问题 {opening_remaining} 个。本轮 action 必须是 next_question，"
+            f"message 必须围绕下面这个开场问题提问（可自然衔接用户上一轮回答，但不得改问别的）：\n"
+            f"「{qs[asked]}」\n"
+            "开场问题全部问完之前，不允许 switch_dimension 进入维度提问。"
         )
     elif current_dim:
         dim = DIM_BY_KEY[current_dim]
