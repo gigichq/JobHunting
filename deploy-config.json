@@ -1,7 +1,7 @@
 {
-  "comment": "space.ai-builders 部署预置（上线阶段使用，POST /v1/deployments）",
-  "repo_url": "<建公开 GitHub 仓库后填写>",
-  "service_name": "career-pacer",
+  "comment": "space.ai-builders 部署配置（POST /v1/deployments）。env_vars 中的敏感配置（如 BLACKLIST_EXTRA）部署时另行传入，不入仓库。",
+  "repo_url": "https://github.com/gigichq/JobHunting",
+  "service_name": "jobhuting",
   "branch": "main",
   "port": 8000,
   "env_vars": {}
